@@ -10,7 +10,7 @@ def read_file(data_path, use_json=False):
     if not os.path.exists(data_path):
         raise Exception('{} don\'t exist !'.format(data_path))
 
-    with open(data_path, 'r') as f:
+    with open(data_path, 'r', encoding='utf-8') as f:
         line = f.readline()
         while True:
             if line is None or line == '':
@@ -127,10 +127,11 @@ class SPOClassifyData:
                 token, _, _ = line.split('\t')
                 vocab[token] = len(vocab)
         else:
-            with open(vocab_path, 'w') as f:
+            with open(vocab_path, 'w', encoding='utf-8') as f:
                 for token, freq, rate in get_vocab([data_train_path, data_dev_path], cut_freq=50):
                     vocab[token] = len(vocab)
                     f.write('{}\t{}\t{}\n'.format(token, freq, rate))
+        self.vocab = vocab
         # get schema
         self.schema = get_schema(schema_path, out_dir)
         print(self.schema[0])
@@ -145,7 +146,7 @@ class SPOClassifyData:
             for o in read_file(out_path, use_json=True):
                 temp_data.append(o)
         else:
-            out_f = open(out_path, 'w')
+            out_f = open(out_path, 'w', encoding='utf-8')
             for o in read_file(data_path, use_json=True):
                 x = list()
                 x.append(vocab['<S>'])
@@ -203,7 +204,7 @@ class SPOClassifyData:
 if __name__ == '__main__':
     # get_input_vocab('/Users/boss/Documents/data/百度事件抽取/train_data/train_data.json')
     # get_output_vocab('/Users/boss/Documents/data/百度事件抽取/schema.json', './')
-    data_loader = SPOClassifyData('/Users/boss/Documents/data/百度事件抽取', './data')
+    data_loader = SPOClassifyData('../data', './data')
     # train_generator, dev_generator = data_loader.get_batch_generator(32, 64)
     # i = 0
     # for x, y, mask in train_generator:

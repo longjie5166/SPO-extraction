@@ -1,5 +1,6 @@
 import tensorflow as tf
 import argparse
+import numpy as np
 from model import GCN, TransformerXL
 from utils import SPOClassifyData, print_metric
 
@@ -71,12 +72,12 @@ def sigmoid_loss(y_true, y_pred):
 @tf.function
 def train_step(inputs, targets, model, optimizer):
     with tf.GradientTape() as tape:
-        outputs = model(inputs)
+        outputs, mems = model(inputs)
         loss = sigmoid_loss(targets, outputs)
     variables = model.trainable_variables
     grads = tape.gradient(loss, variables)
     optimizer.apply_gradients(zip(grads, variables))
-    return loss
+    return loss, mems
 
 
 @tf.function
@@ -87,8 +88,24 @@ def test_step(inputs, targets, model):
 
 
 def train(args):
-    data_loader = SPOClassifyData('/Users/boss/Documents/data/百度事件抽取', './data')
-    model = TransformerXL()
+    data_loader = SPOClassifyData(args.data_path, './data')
+    model = TransformerXL(
+        embedding_size=[len(data_loader.schema[0]), len(data_loader.schema[1]), len(data_loader.schema[2]), len(data_loader.vocab)],
+        embedding_dim=[int(args.embedding_dim / 2), int(args.embedding_dim / 2), int(args.embedding_dim / 2), args.embedding_dim],
+        d_model=args.d_model,
+        n_head=args.n_head,
+        d_head=args.d_head,
+        d_inner=args.d_inner,
+        dropout=args.dropout,
+        dropatt=args.dropatt,
+        is_training=True,
+        n_layers=args.n_layers,
+        mem_len=args.mem_length,
+        s_index=data_loader.vocab['<S>'],
+        e_index=data_loader.vocab['<E>'],
+        rel_t_r_f=data_loader.schema[3],
+        untie_r=args.untie_r
+    )
 
     lr_schedule = tf.keras.optimizers.schedules.ExponentialDecay(
         args.learning_rate,
@@ -97,15 +114,16 @@ def train(args):
         staircase=True)
     optimizer = tf.keras.optimizers.Adam(learning_rate=lr_schedule)
 
-    if args.load_model:
+    if args.load_path:
         model.load_weights(args.load_model)
 
     i = 0
     while i < args.epoch_num:
         train_generator, test_generator = data_loader.get_batch_generator(args.batch_size, args.seq_length)
+        mems = [np.zeros([args.mem_length, args.batch_size, args.d_model], dtype=np.float32) for layer in range(args.n_layers)]
         for step, batch_data in enumerate(train_generator):
             x, y = batch_data
-            loss = train_step(x, y, model, optimizer)
+            loss, mems = train_step([x, mems], y, model, optimizer)
             if step % 100 == 0:
                 print_metric({'loss': loss}, style='train')
         model.save(args.model_path)
@@ -127,11 +145,11 @@ def get_parser():
     parser.add_argument('--learning_rate', type=float, default=5e-4)
     parser.add_argument('--batch_size', type=int, default=32)
     parser.add_argument('--seq_length', type=int, default=64)
-    parser.add_argument('--men_length', type=int, default=64)
+    parser.add_argument('--mem_length', type=int, default=64)
     parser.add_argument('--epoch_num', type=int, default=10)
-    parser.add_argument('--dropout', type=float, default=0.2)
-    parser.add_argument('--dropatt', type=float, default=0.2)
-    parser.add_argument('--embedding_size', type=int, default=64)
+    parser.add_argument('--dropout', type=float, default=0.1)
+    parser.add_argument('--dropatt', type=float, default=0.0)
+    parser.add_argument('--embedding_dim', type=int, default=64)
     parser.add_argument('--d_model', type=int, default=128)
     parser.add_argument('--d_head', type=int, default=16)
     parser.add_argument('--n_head', type=int, default=8)

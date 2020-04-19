@@ -70,14 +70,14 @@ class RelPosBiasLayer(Layer):
         self.r_w_bias = self.add_weight(
             'r_w_bias',
             shape=shape,
-            initializer=self.kernel_initializer,
+            initializer='glorot_uniform',
             dtype=self.dtype,
             trainable=True
         )
         self.r_r_bias = self.add_weight(
             'r_r_bias',
             shape=shape,
-            initializer=self.kernel_initializer,
+            initializer='glorot_uniform',
             dtype=self.dtype,
             trainable=True
         )
@@ -179,7 +179,7 @@ class MultiHeadAtt(Layer):
         attn_score = attn_score * (1 - attn_mask_t) - 1e30 * attn_mask_t
 
         attn_prob = tf.nn.softmax(attn_score, 1)
-        if self.is_training:
+        if self.is_training and self.dropatt != 0:
             attn_prob = tf.nn.dropout(attn_prob, self.dropatt)
 
         attn_vec = tf.einsum('ijbn,jbnd->ibnd', attn_prob, w_head_v)

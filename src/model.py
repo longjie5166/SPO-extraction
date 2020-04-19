@@ -46,10 +46,10 @@ def _cache_mem(curr_out, prev_mem, mem_len=None):
 
 def _create_mask(dec_inp, mlen, s_index):
     # qlen, batch_size
-    inp_mask = tf.cast(dec_inp != 0, tf.int32)
+    inp_mask = tf.cast(dec_inp != 0, tf.float32)
     if mlen == 0:
         # mlen, batch_size
-        mems_mask = tf.tile(tf.cast(dec_inp[0, :] != s_index, tf.int32), [mlen, 1])
+        mems_mask = tf.tile(tf.cast(dec_inp[0:1, :] != s_index, tf.float32), [mlen, 1])
         mask = tf.concat([mems_mask, inp_mask], axis=0)
     else:
         mask = inp_mask
@@ -58,13 +58,14 @@ def _create_mask(dec_inp, mlen, s_index):
 
 class TransformerXL(tf.keras.Model):
     def __init__(self, embedding_size, embedding_dim,
-                 d_model, n_head, d_head, d_inner,
-                 dropout, dropatt, is_training,
-                 n_layers, mem_len,
-                 s_index, e_index,
-                 rel_t_r, rel_r_f,
-                 untie_r=False,
-                 **kwargs):
+                d_model, n_head, d_head, d_inner,
+                dropout, dropatt, is_training,
+                n_layers, mem_len,
+                s_index, e_index,
+                #  rel_t_r, rel_r_f,
+                rel_t_r_f,
+                untie_r=False,
+                **kwargs):
         super(TransformerXL, self).__init__(**kwargs)
         self.d_model = d_model
         self.dropout = dropout
@@ -73,8 +74,9 @@ class TransformerXL(tf.keras.Model):
         self.s_index = s_index
         self.e_index = e_index
         self.untie_r = untie_r
-        self.rel_t_r = tf.constant(rel_t_r)
-        self.rel_r_f = tf.constant(rel_r_f)
+        # self.rel_t_r = tf.constant(rel_t_r)
+        # self.rel_r_f = tf.constant(rel_r_f)
+        self.rel_t_r_f = tf.constant(rel_t_r_f, dtype=tf.float32)
         if untie_r:
             self.rel_pos_bias_layer = RelPosBiasLayer(n_head, d_head, n_layers)
         else:
@@ -89,6 +91,9 @@ class TransformerXL(tf.keras.Model):
         self.embedding_layers['role'] = ly.Embedding(role_size, role_dim)
         self.embedding_layers['form'] = ly.Embedding(form_size, form_dim)
         self.embedding_layers['word'] = ly.Embedding(word_size, word_dim, mask_zero=True)
+        self.transform_dim_layer = None
+        if word_dim != d_model:
+            self.transform_dim_layer = ly.Dense(d_model)
         self.theme_layer = ly.Dense(d_model, activation='tanh')
         self.blocks = []
         for i in range(n_layers):
@@ -109,6 +114,7 @@ class TransformerXL(tf.keras.Model):
 
     def call(self, inputs, training=None, mask=None):
         dec_inp, mems = inputs
+        dec_inp = tf.transpose(dec_inp, [1, 0])
 
         qlen = tf.shape(dec_inp)[0]
         mlen = tf.shape(mems[0])[0] if mems is not None else 0
@@ -123,13 +129,21 @@ class TransformerXL(tf.keras.Model):
         # form_size, hidden_size
         form_embedding = self.embedding_layers['form'](tf.range(0, self.form_size))
 
-        f_r_embedding = tf.einsum('rf,fh->rh', self.rel_r_f, form_embedding)
-        role_embedding = tf.concat([role_embedding, f_r_embedding], axis=-1)
-        r_t_embedding = tf.einsum('tr,rh->th', self.rel_t_r, role_embedding)
-        theme_embedding = tf.concat([theme_embedding, r_t_embedding], axis=-1)
+        # f_r_embedding = tf.einsum('rf,fh->rh', self.rel_r_f, form_embedding)
+        # role_embedding = tf.concat([role_embedding, f_r_embedding], axis=-1)
+        # r_t_embedding = tf.einsum('tr,rh->th', self.rel_t_r, role_embedding)
+        # theme_embedding = tf.concat([theme_embedding, r_t_embedding], axis=-1)
+        rel_t_r = tf.cast(tf.reduce_sum(self.rel_t_r_f, axis=-1) != 0, dtype=role_embedding.dtype)
+        role_embedding = tf.einsum('tr,rh->th', rel_t_r, role_embedding)
+        form_embedding = tf.einsum('trf,fh->trh', self.rel_t_r_f, form_embedding)
+        form_embedding = tf.reduce_sum(form_embedding, axis=1)
+        theme_embedding = tf.concat([theme_embedding, role_embedding, form_embedding], axis=-1)
+
         theme_embedding = self.theme_layer(theme_embedding)
 
         output = self.embedding_layers['word'](dec_inp)
+        if self.transform_dim_layer:
+            output = self.transform_dim_layer(output)
         # attn_mask = _create_mask(qlen, mlen, False)
         key_mask = _create_mask(dec_inp, mlen, self.s_index)
         pos_emb = position_embedding(klen, self.d_model)
@@ -157,14 +171,14 @@ class TransformerXL(tf.keras.Model):
             output = block[4](output + _temp)
 
         if training:
-            output = tf.nn.dropout(output, self.dropout)
+            output = tf.nn.dropout(output,  self.dropout)
 
         # seq_length, batch_size
-        mask = tf.cast(dec_inp == self.e_index, dtype=tf.int32)
+        mask = tf.cast(dec_inp == self.e_index, dtype=tf.float32)
         mask = mask[:, :, None]
         output = tf.reduce_sum(mask * output, axis=0)
         output = self.output_layer([output, theme_embedding])
-        return output
+        return output, new_mems
 
 
 
