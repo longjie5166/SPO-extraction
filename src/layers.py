@@ -179,7 +179,7 @@ class MultiHeadAtt(Layer):
         attn_score = attn_score * (1 - attn_mask_t) - 1e30 * attn_mask_t
 
         attn_prob = tf.nn.softmax(attn_score, 1)
-        if self.is_training and self.dropatt != 0:
+        if self.is_training:
             attn_prob = tf.nn.dropout(attn_prob, self.dropatt)
 
         attn_vec = tf.einsum('ijbn,jbnd->ibnd', attn_prob, w_head_v)

@@ -62,29 +62,58 @@ from utils import SPOClassifyData, print_metric
 _EPSILON = 1e-7
 
 
-def sigmoid_loss(y_true, y_pred):
+def get_loss(y_true, y_pred, mask):
     y_true = tf.cast(y_true, dtype=y_pred.dtype)
+    mask = tf.cast(mask, dtype=y_pred.dtype)
+    count = tf.math.count_nonzero(mask, dtype=y_pred.dtype)
     _y = tf.clip_by_value(y_pred, _EPSILON, 1. - _EPSILON)
-    loss = -1.0 * tf.math.reduce_mean(y_true * tf.math.log(_y) + (1 - y_true) * tf.math.log(1 - _y))
+    loss = tf.math.reduce_sum(y_true * mask * tf.math.log(_y) + (1 - y_true) * mask * tf.math.log(1 - _y))
+    loss = -1.0 * loss / count
     return loss
 
 
+def get_recall(y_true, y_pred):
+    y_true = tf.cast(y_true, dtype=y_pred.dtype)
+    y_pred = tf.cast(y_pred > 0.5, dtype=y_pred.dtype)
+    y = y_pred * y_true
+    tp = tf.math.count_nonzero(y, dtype=y_pred.dtype)
+    tpfn = tf.math.count_nonzero(y_true, dtype=y_pred.dtype)
+    return tp / tpfn
+
+
+def get_precision(y_true, y_pred):
+    y_true = tf.cast(y_true, dtype=y_pred.dtype)
+    y_pred = tf.cast(y_pred > 0.5, dtype=y_pred.dtype)
+    y = y_pred * y_true
+    tp = tf.math.count_nonzero(y, dtype=y_pred.dtype)
+    tptn = tf.math.count_nonzero(y_pred, dtype=y_pred.dtype)
+    return tp / tptn
+
+
+def f1_score(p, r):
+    return 2 * p * r / (p + r)
+
+
 @tf.function
-def train_step(inputs, targets, model, optimizer):
+def train_step(inputs, targets, mask, model, optimizer):
     with tf.GradientTape() as tape:
         outputs, mems = model(inputs)
-        loss = sigmoid_loss(targets, outputs)
+        loss = get_loss(targets, outputs, mask)
+        recall = get_recall(targets, outputs)
+        precision = get_precision(targets, outputs)
     variables = model.trainable_variables
     grads = tape.gradient(loss, variables)
     optimizer.apply_gradients(zip(grads, variables))
-    return loss, mems
+    return [loss, recall, precision], mems
 
 
 @tf.function
-def test_step(inputs, targets, model):
-    outputs = model(inputs)
-    loss = sigmoid_loss(targets, outputs)
-    return loss
+def test_step(inputs, targets, mask, model):
+    outputs, mems = model(inputs)
+    loss = get_loss(targets, outputs, mask)
+    recall = get_recall(targets, outputs)
+    precision = get_precision(targets, outputs)
+    return [loss, recall, precision], mems
 
 
 def train(args):
@@ -114,25 +143,68 @@ def train(args):
         staircase=True)
     optimizer = tf.keras.optimizers.Adam(learning_rate=lr_schedule)
 
+    train_metrics = [
+        tf.metrics.Mean(name='loss'),
+        tf.metrics.Mean(name='recall'),
+        tf.metrics.Mean(name='precision')
+    ]
+    test_metrics = [
+        tf.metrics.Mean(name='test_loss'),
+        tf.metrics.Mean(name='recall'),
+        tf.metrics.Mean(name='precision')
+    ]
+
     if args.load_path:
         model.load_weights(args.load_model)
 
     i = 0
     while i < args.epoch_num:
         train_generator, test_generator = data_loader.get_batch_generator(args.batch_size, args.seq_length)
-        mems = [np.zeros([args.mem_length, args.batch_size, args.d_model], dtype=np.float32) for layer in range(args.n_layers)]
+        mems = [
+            np.zeros([args.mem_length, args.batch_size, args.d_model], dtype=np.float32)
+            for _ in range(args.n_layers)
+        ]
         for step, batch_data in enumerate(train_generator):
-            x, y = batch_data
-            loss, mems = train_step([x, mems], y, model, optimizer)
+            x, y, mask = batch_data
+            metrics, mems = train_step([x, mems], y, mask, model, optimizer)
+            for o_metric, m in zip(train_metrics, metrics):
+                o_metric(m)
+
             if step % 100 == 0:
-                print_metric({'loss': loss}, style='train')
+                print_dict = {
+                    'epoch_i': i + 1,
+                    'batch_i': step
+                }
+                for k, v in zip(['loss', 'recall', 'precision'], train_metrics):
+                    print_dict[k] = v.result().numpy()
+                print_dict['f1-score'] = f1_score(print_dict['precision'], print_dict['recall'])
+
+                print_metric(
+                    print_dict,
+                    style='train'
+                )
         model.save(args.model_path)
 
-        loss = 0.0
+        for o_metric in train_metrics:
+            o_metric.reset_states()
+
+        mems = [np.zeros([args.mem_length, args.batch_size, args.d_model], dtype=np.float32) for layer in range(args.n_layers)]
         for batch_data in test_generator:
-            x, y = batch_data
-            loss += test_step(x, y, model)
-        print_metric({'loss': loss}, style='eval')
+            x, y, mask = batch_data
+            metrics, mems = test_step([x, mems], y, mask, model)
+            for o_metric, m in zip(test_metrics, metrics):
+                o_metric(m)
+        print_dict = dict()
+        for k, v in zip(['loss', 'recall', 'precision'], test_metrics):
+            print_dict[k] = v.result().numpy()
+        print_dict['f1-score'] = f1_score(print_dict['precision'], print_dict['recall'])
+        print_metric(
+            print_dict,
+            style='eval'
+        )
+
+        for o_metric in test_metrics:
+            o_metric.reset_states()
 
         i += 1
 

@@ -176,7 +176,7 @@ class SPOClassifyData:
             while True:
                 batch_x = np.zeros(shape=(batch_size, seq_length), dtype=np.int)
                 batch_y = np.zeros(shape=(batch_size, out_size), dtype=np.int)
-                # mask = np.zeros_like(batch_x)
+                mask = np.zeros(shape=(batch_size, out_size), dtype=np.int)
                 for i in range(batch_size):
                     d = in_data[text_ids[i]]
                     text = d['x']
@@ -184,6 +184,7 @@ class SPOClassifyData:
                         batch_x[i, :len(text[buffers[i]:])] = text[buffers[i]:]
                         batch_y[i, d['y']] = 1
                         # mask[i, len(text[buffers[i]:]) - 1] = 1
+                        mask[i] = np.ones(shape=(out_size,), dtype=np.int)
                         if cursor >= size:
                             is_over = True
                             break
@@ -195,8 +196,8 @@ class SPOClassifyData:
                         buffers[i] += seq_length
                 if is_over:
                     break
-                # yield batch_x, batch_y, mask
-                yield batch_x, batch_y
+                yield batch_x, batch_y, mask
+                # yield batch_x, batch_y
 
         return batch_generator(self.train_data), batch_generator(self.dev_data)
 
