@@ -34,7 +34,8 @@ def print_metric(metric, style='train'):
         if k in ['epoch_i', 'batch_i']:
             continue
         print_str += ' {}: {:.4f} |'.format(k, v)
-    return print_str
+    print(print_str)
+    # return print_str
 
 
 def get_vocab(data_path, vocab_size=None, cut_freq=1):
@@ -134,7 +135,7 @@ class SPOClassifyData:
         self.vocab = vocab
         # get schema
         self.schema = get_schema(schema_path, out_dir)
-        print(self.schema[0])
+        # print(self.schema[0])
         train_path = os.path.join(out_dir, 'train.dat')
         dev_path = os.path.join(out_dir, 'dev.dat')
         self.train_data = self.get_train_data(data_train_path, train_path, vocab)

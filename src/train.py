@@ -78,7 +78,7 @@ def get_recall(y_true, y_pred):
     y = y_pred * y_true
     tp = tf.math.count_nonzero(y, dtype=y_pred.dtype)
     tpfn = tf.math.count_nonzero(y_true, dtype=y_pred.dtype)
-    return tp / tpfn
+    return tp / (tpfn + _EPSILON)
 
 
 def get_precision(y_true, y_pred):
@@ -87,7 +87,7 @@ def get_precision(y_true, y_pred):
     y = y_pred * y_true
     tp = tf.math.count_nonzero(y, dtype=y_pred.dtype)
     tptn = tf.math.count_nonzero(y_pred, dtype=y_pred.dtype)
-    return tp / tptn
+    return tp / (tptn + _EPSILON)
 
 
 def f1_score(p, r):
@@ -117,6 +117,9 @@ def test_step(inputs, targets, mask, model):
 
 
 def train(args):
+    # gpus = tf.config.experimental_list_devices('GPU')
+    # for gpu in gpus:
+    #     tf.config.set_soft_device_placement(gpu, True)
     data_loader = SPOClassifyData(args.data_path, './data')
     model = TransformerXL(
         embedding_size=[len(data_loader.schema[0]), len(data_loader.schema[1]), len(data_loader.schema[2]), len(data_loader.vocab)],
@@ -138,7 +141,7 @@ def train(args):
 
     lr_schedule = tf.keras.optimizers.schedules.ExponentialDecay(
         args.learning_rate,
-        decay_steps=2000,
+        decay_steps=10000,
         decay_rate=0.96,
         staircase=True)
     optimizer = tf.keras.optimizers.Adam(learning_rate=lr_schedule)
@@ -150,8 +153,8 @@ def train(args):
     ]
     test_metrics = [
         tf.metrics.Mean(name='test_loss'),
-        tf.metrics.Mean(name='recall'),
-        tf.metrics.Mean(name='precision')
+        tf.metrics.Mean(name='test_recall'),
+        tf.metrics.Mean(name='test_precision')
     ]
 
     if args.load_path:
@@ -183,7 +186,7 @@ def train(args):
                     print_dict,
                     style='train'
                 )
-        model.save(args.model_path)
+        model.save_weights(args.model_path)
 
         for o_metric in train_metrics:
             o_metric.reset_states()
@@ -214,8 +217,8 @@ def get_parser():
     parser.add_argument('data_path', type=str)
     parser.add_argument('model_path', type=str)
     parser.add_argument('--load_path', type=str, default=None)
-    parser.add_argument('--learning_rate', type=float, default=5e-4)
-    parser.add_argument('--batch_size', type=int, default=32)
+    parser.add_argument('--learning_rate', type=float, default=1e-4)
+    parser.add_argument('--batch_size', type=int, default=8)
     parser.add_argument('--seq_length', type=int, default=64)
     parser.add_argument('--mem_length', type=int, default=64)
     parser.add_argument('--epoch_num', type=int, default=10)
